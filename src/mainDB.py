@@ -2,12 +2,16 @@ from Parser import Parser
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, roc_curve, auc
+from sklearn.metrics import accuracy_score, roc_curve, auc, f1_score, precision_recall_curve
+import scikitplot as skplt
+
 import os
 import pandas as pd
 
 from pymongo import MongoClient
 import matplotlib.pyplot as plt
+
+import numpy as np
 
 
 # ------ Establecer la conexión a MongoDB ------
@@ -39,8 +43,8 @@ def prep_dataset_mongodb(n_elements):
 
 # ------------------------------------------------------------------------------------------------
 # Leemos únicamente un subconjunto de 100 correos electrónicos
-
-X_train, y_train = prep_dataset_mongodb(10)
+DATA_TRAIN = 100
+X_train, y_train = prep_dataset_mongodb(DATA_TRAIN)
 print(X_train)
 
 #-------------------------------------------------------------------------------------------------
@@ -65,9 +69,11 @@ print(clf)
 #Lectura de un conjunto de correos nuevos
 # Leemos 150 correos de nuestro conjunto de datos y nos quedamos únicamente con los 50 últimos
 # Estos 50 correos electrónicos no se han utilizado para entrenar el algoritmo
-X, y = prep_dataset_mongodb(700)
-X_test = X[100:]
-y_test = y[100:]
+DATA_PREDICT = 10000
+
+X, y = prep_dataset_mongodb(DATA_PREDICT+DATA_TRAIN)
+X_test = X[DATA_TRAIN:]
+y_test = y[DATA_TRAIN:]
 
 y_test_binary = [0 if 'ham' in string else 1 for string in y_test]
 
@@ -77,6 +83,7 @@ X_test = vectorizer.transform(X_test)
 ##### Predicción del tipo de correo
 y_pred = clf.predict(X_test)
 y_pred_prob = clf.predict_proba(X_test)
+y_pred_log_prob = clf.predict_log_proba(X_test)
 
 
 ##### Evaluación de los resultados
@@ -105,7 +112,9 @@ print(contingency_table)
 # (2 + 45 ) / 50 = 0.94
 
 # Calcular la curva ROC
-fpr, tpr, thresholds = roc_curve(y_test_binary, y_pred_prob[:, 1])
+y_pred_prob_for_spam = y_pred_prob[:, 1]
+
+fpr, tpr, thresholds = roc_curve(y_test_binary, y_pred_prob_for_spam)
 roc_auc = auc(fpr, tpr)
 
 # Trazar la curva ROC
@@ -119,3 +128,77 @@ plt.ylabel('Tasa de Verdaderos Positivos')
 plt.title('Curva ROC')
 plt.legend(loc="lower right")
 plt.show()
+
+# Generar la curva ROC y calcular el AUC
+# skplt.metrics.plot_roc(y_test_binary, y_pred_prob)
+# plt.show()
+
+
+# Encontrar el valor de corte óptimo utilizando la métrica accuracy_score
+f1_scores = []
+cutoffs = []
+for cutoff in np.arange(0.1, 1.0, 0.01):
+    y_pred_binary = (y_pred_prob_for_spam >= cutoff).astype(int)
+    f1Score = f1_score(y_test_binary, y_pred_binary)
+    f1_scores.append(f1Score)
+    cutoffs.append(cutoff)
+
+optimal_cutoff = cutoffs[np.argmax(f1_scores)]
+print("Valor de corte óptimo:", optimal_cutoff)
+
+
+
+
+y_pred_new =  ["spam" if (value > optimal_cutoff) else "ham" for value in y_pred_prob_for_spam]
+
+
+# Crear un DataFrame con los datos
+df1 = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred_new})
+
+# Crear una tabla de contingencia
+contingency_table1 = pd.crosstab(df1['Actual'], df1['Predicted'])
+
+# Mostrar la tabla de contingencia
+print(contingency_table1)
+
+#TASA ACIERTO
+# (3+45) / 50 = 0.96
+#TASA ERROR
+# (0 + 2) / 50 = 0.04
+
+
+
+# Calcular la exactitud para diferentes valores de corte
+cutoffs = np.arange(0.3, 0.9, 0.01)
+accuracies = []
+accuracy_ant=0
+optimal_cutoff_2=0
+
+for cutoff in cutoffs:
+    y_pred_binary = (y_pred_prob_for_spam >= cutoff).astype(int)
+    accuracy = accuracy_score(y_test_binary, y_pred_binary)
+    accuracies.append(accuracy)
+    if(accuracy > accuracy_ant):
+        optimal_cutoff_2 = cutoff
+    accuracy_ant = accuracy
+
+print("Valor de corte óptimo segun acc es :", optimal_cutoff_2)
+
+# Dibujar la curva de exactitud en función del valor de corte
+plt.plot(cutoffs, accuracies, marker='.')
+plt.xlabel('Cutoff')
+plt.ylabel('Accuracy')
+plt.title('Curva de Exactitud en función del Valor de Corte')
+plt.show()
+
+y_pred_new2 =  ["spam" if (value > optimal_cutoff_2) else "ham" for value in y_pred_prob_for_spam]
+
+# Crear un DataFrame con los datos
+df2 = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred_new2})
+
+# Crear una tabla de contingencia
+contingency_table2 = pd.crosstab(df2['Actual'], df2['Predicted'])
+
+# Mostrar la tabla de contingencia
+print(contingency_table2)
+
